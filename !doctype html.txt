@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mi inventario</title>
+
+  <!-- Biblioteca que permite leer códigos con la cámara -->
+  https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.jsscript>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: auto;
+      padding: 18px;
+      background: #f5f5f5;
+    }
+    h1 { font-size: 25px; }
+    label { display: block; margin-top: 14px; font-weight: bold; }
+    input, button {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 13px;
+      margin-top: 6px;
+      font-size: 17px;
+    }
+    button {
+      background: #145a7a;
+      color: white;
+      border: 0;
+      border-radius: 6px;
+      margin-top: 12px;
+    }
+    .secondary { background: #555; }
+    .danger { background: #a33131; }
+    .card {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      margin-top: 16px;
+    }
+    .item {
+      border-bottom: 1px solid #ddd;
+      padding: 10px 0;
+    }
+    .item button { width: auto; padding: 7px 10px; font-size: 14px; }
+    #mensaje { font-weight: bold; }
+  </style>
+</head>
+
+<body>
+  <h1>Inventario del bar</h1>
+  <p>Escanea un producto, escribe cuántas unidades encontraste y pulsa Añadir.</p>
+
+  <button id="abrirCamara">Escanear código de barras</button>
+  <div id="lector" class="card" style="display:none"></div>
+
+  <div class="card">
+    <label for="codigo">Código de barras</label>
+    <input id="codigo" type="text" inputmode="numeric"
+           placeholder="Se rellena al escanear o puedes escribirlo">
+
+    <label for="nombre">Nombre del producto</label>
+    <input id="nombre" type="text"
+           placeholder="Ejemplo: Coca-Cola 330 ml">
+
+    <label for="cantidad">Unidades encontradas ahora</label>
+    <input id="cantidad" type="number" min="1" step="1"
+           inputmode="numeric" placeholder="Ejemplo: 6">
+
+    <button id="agregar">Añadir al conteo</button>
+    <p id="mensaje"></p>
+  </div>
+
+  <div class="card">
+    <h2>Conteo actual</h2>
+    <div id="lista"></div>
+    <button id="exportar">Descargar para Excel (CSV)</button>
+    <button id="reiniciar" class="danger">Empezar un conteo nuevo</button>
+  </div>
+
+  <script>
+    const claveCatalogo = "miBarCatalogoV1";
+    const claveConteo = "miBarConteoV1";
+
+    let catalogo = JSON.parse(localStorage.getItem(claveCatalogo) || "{}");
+    let conteo = JSON.parse(localStorage.getItem(claveConteo) || "{}");
+    let escaner = null;
+
+    const codigo = document.getElementById("codigo");
+    const nombre = document.getElementById("nombre");
+    const cantidad = document.getElementById("cantidad");
+    const mensaje = document.getElementById("mensaje");
+    const lector = document.getElementById("lector");
+    const lista = document.getElementById("lista");
+
+    function guardar() {
+      localStorage.setItem(claveCatalogo, JSON.stringify(catalogo));
+      localStorage.setItem(claveConteo, JSON.stringify(conteo));
+    }
+
+    function mostrarProducto() {
+      const id = codigo.value.trim();
+      nombre.value = catalogo[id] || "";
+      cantidad.value = "";
+      if (id) cantidad.focus();
+    }
+
+    codigo.addEventListener("change", mostrarProducto);
+
+    document.getElementById("abrirCamara").onclick = function () {
+      if (typeof Html5QrcodeScanner === "undefined") {
+        mensaje.textContent = "No se cargó el lector. Comprueba tu conexión.";
+        return;
+      }
+
+      if (escaner) return;
+
+      lector.style.display = "block";
+      mensaje.textContent = "Permite el acceso a la cámara y apunta al código.";
+
+      escaner = new Html5QrcodeScanner(
+        "lector",
+        { fps: 10, qrbox: { width: 250, height: 150 } },
+        false
+      );
+
+      escaner.render(async function (textoEscaneado) {
+        codigo.value = textoEscaneado;
+        mostrarProducto();
+        mensaje.textContent = "Código leído. Introduce la cantidad.";
+
+        const lectorActual = escaner;
+        escaner = null;
+        try {
+          await lectorActual.clear();
+        } catch (error) {
+          console.error(error);
+        }
+        lector.style.display = "none";
+      });
+    };
+
+    document.getElementById("agregar").onclick = function () {
+      const id = codigo.value.trim();
+      const producto = nombre.value.trim();
+      const unidades = Number(cantidad.value);
+
+      if (!id || !producto || !Number.isInteger(unidades) || unidades < 1) {
+        mensaje.textContent =
+          "Completa el código, el nombre y una cantidad entera mayor que cero.";
+        return;
+      }
+
+      catalogo[id] = producto;
+
+      if (!conteo[id]) {
+        conteo[id] = { nombre: producto, cantidad: 0 };
+      }
+
+      conteo[id].nombre = producto;
+      conteo[id].cantidad += unidades;
+      guardar();
+      dibujarLista();
+
+      mensaje.textContent =
+        "Añadidas " + unidades + " unidades. Total de " +
+        producto + ": " + conteo[id].cantidad + ".";
+
+      codigo.value = "";
+      nombre.value = "";
+      cantidad.value = "";
+    };
+
+    function dibujarLista() {
+      lista.replaceChildren();
+      const entradas = Object.entries(conteo);
+
+      if (entradas.length === 0) {
+        lista.textContent = "Todavía no has contado productos.";
+        return;
+      }
+
+      entradas.sort((a, b) =>
+        a[1].nombre.localeCompare(b[1].nombre, "es")
+      );
+
+      for (const [id, producto] of entradas) {
+        const fila = document.createElement("div");
+        fila.className = "item";
+
+        const texto = document.createElement("div");
+        texto.textContent =
+          producto.nombre + " | " + producto.cantidad +
+          " unidades | Código: " + id;
+
+        const corregir = document.createElement("button");
+        corregir.className = "secondary";
+        corregir.textContent = "Corregir total";
+
+        corregir.onclick = function () {
+          const respuesta = prompt(
+            "Nuevo TOTAL para " + producto.nombre + ":",
+            producto.cantidad
+          );
+          if (respuesta === null) return;
+
+          const nuevoTotal = Number(respuesta);
+          if (!Number.isInteger(nuevoTotal) || nuevoTotal < 0) {
+            alert("Escribe un número entero igual o mayor que cero.");
+            return;
+          }
+
+          conteo[id].cantidad = nuevoTotal;
+          guardar();
+          dibujarLista();
+        };
+
+        fila.append(texto, corregir);
+        lista.appendChild(fila);
+      }
+    }
+
+    function celdaCSV(valor) {
+      let texto = String(valor);
+      // Evita que Excel interprete nombres como fórmulas.
+      if (/^[=+\-@\t\r]/.test(texto)) texto = "'" + texto;
+      return '"' + texto.replaceAll('"', '""') + '"';
+    }
+
+    document.getElementById("exportar").onclick = function () {
+      const entradas = Object.entries(conteo);
+
+      if (entradas.length === 0) {
+        alert("Primero añade algún producto.");
+        return;
+      }
+
+      const filas = [
+        ["Código de barras", "Producto", "Cantidad"]
+      ];
+
+      for (const [id, producto] of entradas) {
+        filas.push([id, producto.nombre, producto.cantidad]);
+      }
+
+      const csv = "\uFEFF" +
+        filas.map(fila => fila.map(celdaCSV).join(",")).join("\r\n");
+
+      const archivo = new Blob([csv], {
+        type: "text/csv;charset=utf-8"
+      });
+      const enlace = document.createElement("a");
+      enlace.href = URL.createObjectURL(archivo);
+      enlace.download =
+        "inventario-" + new Date().toISOString().slice(0, 10) + ".csv";
+      document.body.appendChild(enlace);
+      enlace.click();
+      enlace.remove();
+      setTimeout(() => URL.revokeObjectURL(enlace.href), 1000);
+    };
+
+    document.getElementById("reiniciar").onclick = function () {
+      if (!confirm("¿Borrar el conteo actual? El catálogo se conservará.")) {
+        return;
+      }
+      conteo = {};
+      guardar();
+      dibujarLista();
+      mensaje.textContent = "Conteo nuevo iniciado.";
+    };
+
+    dibujarLista();
+  </script>
+</body>
+</html>
